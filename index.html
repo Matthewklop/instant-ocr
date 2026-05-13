@@ -313,6 +313,22 @@ async function processImage(file) {
     loading.classList.remove('show');
   }
 }
+// ── Auto-OCR from URL parameter (LLM-friendly) ──
+(async function(){
+  const params = new URLSearchParams(window.location.search);
+  const imageUrl = params.get('image') || params.get('url') || params.get('src');
+  if (imageUrl) {
+    try {
+      const resp = await fetch(imageUrl);
+      const blob = await resp.blob();
+      const file = new File([blob], 'image.' + (blob.type.split('/')[1] || 'png'), { type: blob.type });
+      processImage(file);
+    } catch(e) {
+      document.getElementById('outputText').textContent = 'Failed to fetch image: ' + e.message;
+      document.getElementById('result').classList.add('show');
+    }
+  }
+})();
 </script>
 
 </body>
