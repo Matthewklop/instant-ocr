@@ -129,7 +129,7 @@
 <div class="drop-zone" id="dropZone">
   <div class="prompt">
     <div class="icon">📄</div>
-    <div class="text">DROP IMAGE HERE</div>
+    <div class="text">DROP IMAGE OR PDF HERE</div>
   </div>
 </div>
 
@@ -148,6 +148,7 @@
 <input type="file" id="fileInput" accept="image/*" style="display:none">
 
 <!-- Tesseract OCR (WASM, no server needed) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://unpkg.com/tesseract.js@5/dist/tesseract.min.js"></script>
 
 <!-- FrameWolf performance overlay -->
@@ -226,6 +227,8 @@ document.addEventListener('paste', (e) => {
 });
 
 async function processImage(file) {
+  const isPDF = file.type === 'application/pdf' || file.name.endsWith('.pdf');
+  
   // Show preview
   const reader = new FileReader();
   reader.onload = (e) => {
@@ -240,6 +243,50 @@ async function processImage(file) {
 
   const startTime = performance.now();
 
+  // If PDF, render pages to canvas first
+  if (isPDF) {
+    try {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      const pdfData = new Uint8Array(await file.arrayBuffer());
+      const pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
+      const totalPages = pdf.numPages;
+      let allText = '';
+      
+      for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+        const page = await pdf.getPage(pageNum);
+        const viewport = page.getViewport({ scale: 2.0 }); // 2x for OCR accuracy
+        const canvas = document.createElement('canvas');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const ctx = canvas.getContext('2d');
+        await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+        
+        // Convert canvas to blob for Tesseract
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        const { data } = await Tesseract.recognize(blob, 'eng');
+        allText += data.text + '\n';
+        
+        // Update progress
+        loading.textContent = `PROCESSING PAGE ${pageNum}/${totalPages}`;
+      }
+      
+      const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
+      outputText.textContent = allText.trim() || '(no text found)';
+      statTime.textContent = `⏱ ${elapsed}s`;
+      statWords.textContent = `${allText.split(/\s+/).filter(Boolean).length} words`;
+      statChars.textContent = `${allText.length} chars`;
+      result.classList.add('show');
+      loading.classList.remove('show');
+      return;
+    } catch (pdfErr) {
+      outputText.textContent = 'Error processing PDF: ' + (pdfErr.message || 'failed');
+      result.classList.add('show');
+      loading.classList.remove('show');
+      return;
+    }
+  }
+
+  // Standard image OCR
   try {
     const worker = await Tesseract.recognize(file, 'eng', {
       logger: (m) => {
